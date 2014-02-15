@@ -1,0 +1,202 @@
+#!/bin/bash
+
+command=$1
+shift
+
+user_exists() {
+  id -u $1 > /dev/null 2>&1
+  return $?
+}
+
+site_exists() {
+  if [ -d "/home/$1/$2.git" ]; then
+    return 0;
+  else
+    return 1;
+  fi
+}
+
+initialize_repo() {
+  TARGET=$1
+  DEPLOY_COMMAND=$2
+
+  $GD_GIT_EXEC init --bare $TARGET > /dev/null
+}
+
+add_hook() {
+  REPO=$1
+  HOOKTYPE=$2
+  CONTENTS=$3
+
+  HOOKFILE=$REPO/hooks/${HOOKTYPE}
+
+  if [ ! -f $HOOKFILE ]; then
+    echo "#!/bin/sh" >> $HOOKFILE
+    chmod +x $HOOKFILE
+  fi
+
+  echo $CONTENTS >> $HOOKFILE
+}
+
+add_vhost() {
+  FILENAME=$1
+  shift
+  SITENAME=$1
+  shift
+  DOCUMENTROOT=$1
+  shift
+  ALIASES=$@
+
+  VHOSTFILE=${GD_APACHE_SITEROOT}/${FILENAME}.conf
+
+  ALIASLINE=""
+
+  if [ ! -z "$ALIASES" ]; then
+    ALIASLINE="ServerAlias $ALIASES"
+  fi
+
+  cat >$VHOSTFILE <<EOF
+<VirtualHost *:80>
+	ServerName ${SITENAME}
+  $ALIASLINE
+	
+	DocumentRoot ${DOCUMENTROOT}
+
+	CustomLog ${GD_APACHE_LOGROOT}/${FILENAME}_access.log vhost_combined
+	ErrorLog ${GD_APACHE_LOGROOT}/${FILENAME}_error.log
+
+	<Directory ${DOCUMENTROOT}>
+    Satisfy any
+		Order deny,allow
+		Allow from all
+	</Directory>
+</VirtualHost>
+EOF
+
+  if [ -n "$GD_APACHE_SITELINKS" ]; then
+    ln -s "${VHOSTFILE}" "${GD_APACHE_SITELINKS}/"
+  fi
+
+}
+
+add_command() {
+
+  if [ $# -lt 2 ]; then
+    print_add_help;
+    exit 1;
+  fi
+
+  USERNAME=$1
+  shift
+  SITENAME=$1
+  shift
+  ALIASES=$@
+
+  if ! user_exists "$USERNAME"; then
+    echo "User $USERNAME does not exist"
+    exit 1
+  fi
+
+  if site_exists "$USERNAME" "$SITENAME"; then
+    echo "Site already exists!"
+    exit 1
+  fi
+
+  echo "Creating ${SITENAME} for ${USERNAME}..."
+  echo ""
+
+  UHOME=/home/${USERNAME}
+  REPO=${UHOME}/${SITENAME}.git
+  ACTIVE=$UHOME/${SITENAME}.active
+
+  # Generate Apache conf
+  echo -n "Adding a virtual host..."
+  add_vhost "${USERNAME}-${SITENAME}" "$SITENAME" "$ACTIVE" $ALIASES
+  echo "Done."
+
+  echo -n "Initializing git repository..."
+  initialize_repo $REPO
+  add_hook $REPO "post-receive" "${DIR}/git-deploy deploy $USERNAME $SITENAME"
+  chown ${USERNAME}:${USERNAME} -R ${REPO}
+  echo "Done"
+
+  if [ -n "$GD_DEFAULT_DOCUMENTROOT" ]; then
+    echo -n "Setting default site..."
+    ln -s "$GD_DEFAULT_DOCUMENTROOT" "$ACTIVE"
+    echo "Done"
+  fi
+
+  # restart apache
+  echo -n "Reloading apache..."
+  service ${GD_APACHE_SERVICENAME} reload > /dev/null
+  echo "Done."
+
+  echo ""
+  echo "Repository up and running! Add this remote to start pushing:"
+  echo "  git remote add ${USERNAME}@${GD_HOSTNAME}:`basename $REPO`"
+}
+
+rm_command() {
+
+  if [ $# -lt 2 ]; then
+    print_rm_help;
+    exit 1;
+  fi
+
+  USERNAME=$1
+  shift
+  SITENAME=$1
+
+  if ! user_exists "$USERNAME"; then
+    echo "User $USERNAME does not exist"
+    exit 1
+  fi
+
+  if ! site_exists "$USERNAME" "$SITENAME"; then
+    echo "Can't remove a non-existant site!"
+    exit 1
+  fi
+
+  UHOME=/home/${USERNAME}
+  REPO=${UHOME}/${SITENAME}.git
+  ACTIVE=$UHOME/${SITENAME}.active
+
+  echo -n "Removing vhost..."
+  rm -f "${GD_APACHE_SITEROOT}/${USERNAME}-${SITENAME}.conf"
+  if [ -n "${GD_APACHE_SITELINKS}" ]; then
+    rm -f "${GD_APACHE_SITELINKS}/${USERNAME}-${SITENAME}.conf"
+  fi
+  echo "Done."
+
+  echo -n "Reloading apache..."
+  service "${GD_APACHE_SERVICENAME}" reload > /dev/null
+  echo "Done"
+
+  echo -n "Removing active link..."
+  rm -f "$ACTIVE"
+  echo "Done"
+
+  echo -n "Removing repository..."
+  rm -rf "$REPO"
+  echo "Done"
+
+  echo -n "Cleaning all deploys..."
+  rm -rf ${UHOME}/${SITENAME}-*.deploy
+  echo "Done"
+}
+
+print_add_help() {
+  echo "usage: site add <username> <sitename> [<alias>...]"
+  echo ""
+  echo "username - The username of the owner of the site"
+  echo "sitename - The name of the site (including .com)"
+}
+
+case "$command" in
+  "add")
+    add_command $@
+    ;;
+  "rm")
+    rm_command $@
+    ;;
+esac

@@ -1,0 +1,23 @@
+#!/bin/bash
+
+
+subcommand=$1
+shift
+
+DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+SUBCOMMAND_FILE=${DIR}/commands/${subcommand}
+
+if [ ! -f $SUBCOMMAND_FILE ]; then
+	echo "Unknown subcommand: $subcommand" >&2
+	exit 1
+fi
+
+
+source $DIR/config.sh
+
+if [[ -n "$GD_DEBUG" && $GD_DEBUG -eq 1 ]]; then
+  set -x
+fi
+
+source $SUBCOMMAND_FILE

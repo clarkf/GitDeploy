@@ -1,0 +1,72 @@
+#!/bin/bash
+
+if [ $# -lt 2 ]
+then
+	echo "$0 - deploy a site"
+	echo ""
+	echo "$0 [username] [servername]"
+	exit 1;
+fi
+
+
+USERNAME=$1
+SERVERNAME=$2
+
+HOME=/home/$USERNAME
+REPO=${HOME}/${SERVERNAME}.git
+
+if [[ ! -d $REPO ]]; then
+	echo "ERROR: User directory doesn't exist. Exiting." >&2
+	exit 1;
+fi
+
+ACTIVE=${HOME}/${SERVERNAME}.active
+
+NEWREPONAME="${SERVERNAME}-`date +%s`.deploy"
+NEWREPO=${HOME}/${NEWREPONAME}
+
+OLDACTIVE=$(readlink $ACTIVE)
+
+if [[ ! -d $OLDACTIVE  || "$OLDACTIVE" = "$GD_DEFAULT_DOCUMENTROOT" ]]; then
+  echo -n "Cloning new repo..."
+  mkdir "$NEWREPO"
+
+  git --git-dir="${REPO}" --work-tree="${NEWREPO}" checkout master > /dev/null 2>&1
+  if [ $? -ne 0 ]; then
+    echo "Error: Couldn't checkout repository." >&2
+    exit 1
+  fi
+  echo "Done"
+else
+  echo -n "Checking out new changes..."
+
+  cp -r -p  "${OLDACTIVE}" "${NEWREPO}" > /dev/null
+  git --git-dir="${REPO}" --work-tree="${NEWREPO}" checkout -f master > /dev/null 2>&1
+  if [ $? -ne 0 ]; then
+    echo "Unable to checkout new changes!" >&2
+    exit 1
+  fi
+
+  echo "Done"
+fi
+
+if [[ `whoami` = 'root' ]]; then
+  echo -n "Root detected. Changing file ownership..."
+  chown -R $USERNAME:$USERNAME "$NEWREPO"
+  echo "Done"
+fi
+
+chmod -R +x ${NEWREPO}
+
+echo "Linking repository-- making it live!"
+if [ -h "${ACTIVE}" ]; then
+  rm "$ACTIVE"
+fi
+ln -f -s ${NEWREPO} ${ACTIVE}
+echo "Deploy success."
+
+if [[ "$OLDACTIVE" != "$GD_DEFAULT_DOCUMENTROOT" ]]; then
+  echo -n "Cleaning old deploys..."
+  rm -rf ${OLDACTIVE}
+  echo "Done!"
+fi

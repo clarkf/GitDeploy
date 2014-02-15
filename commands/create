@@ -1,0 +1,50 @@
+#! /bin/bash
+
+if [ $# != 2 ]; then
+	echo "create - create a new user account"
+	echo ""
+	echo "$0 [username] id_rsa.pub"
+	exit 1;
+fi
+
+if [ "$(id -u)" != "0" ]; then
+	echo "This script must be run as root" 1>&2
+	exit 1
+fi
+
+USERNAME=$1
+KEY=$2
+
+# Create the user
+useradd $USERNAME -s /usr/bin/git-shell -m
+if [ $? != 0 ]; then
+	echo "Unable to create user" >&2
+	exit 1;
+fi
+passwd $USERNAME
+if [ $? != 0 ]; then
+	echo "Unable to assign user password" >&2
+	exit 1;
+fi
+
+HOME=/home/$USERNAME
+
+chmod +x $HOME
+
+# Create interactive shell
+echo -n "Creating shell..."
+shell_file=${HOME}/git-shell-commands/no-interactive-login
+
+mkdir -p `dirname $shell_file`
+cp  ${DIR}/templates/no-interactive-login $shell_file
+chmod +x $shell_file
+chown ${USERNAME}:${USERNAME} -R `dirname $shell_file`
+echo "done"
+
+echo -n "Importing ssh credentials..."
+mkdir -p ${HOME}/.ssh
+cp $KEY ${HOME}/.ssh/authorized_keys
+chmod 755 ${HOME}/.ssh
+chmod 600 ${HOME}/.ssh/authorized_keys # authorized keys MUST be 600
+chown -R ${USERNAME}:${USERNAME} ${HOME}/.ssh
+echo "done."
